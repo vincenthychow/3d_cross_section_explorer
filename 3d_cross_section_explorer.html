@@ -662,6 +662,41 @@
         planeGroup.add(arrowGroup);
 
         var planePickables = [slicingPlaneMesh, shaftMesh, headMesh];
+        var planeHovered = false;
+        var planeDragActive = false;
+
+        function setPlaneHighlight(on) {
+          var active = !!on;
+          if (planeHovered === active && !planeDragActive) return;
+          planeHovered = active;
+          if (active || planeDragActive) {
+            planeMat.color.setHex(0xf472b6);
+            planeMat.opacity = 0.34;
+            planeBorderMat.color.setHex(0xf9a8d4);
+            planeBorderMat.opacity = 1;
+            crossMat.color.setHex(0xfbcfe8);
+            crossMat.opacity = 0.55;
+            arrowMat.color.setHex(0xf472b6);
+            arrowMat.emissive.setHex(0xdb2777);
+            arrowMat.emissiveIntensity = 0.85;
+          } else {
+            planeMat.color.setHex(0x06b6d4);
+            planeMat.opacity = 0.16;
+            planeBorderMat.color.setHex(0x22d3ee);
+            planeBorderMat.opacity = 0.85;
+            crossMat.color.setHex(0x67e8f9);
+            crossMat.opacity = 0.25;
+            arrowMat.color.setHex(0x22d3ee);
+            arrowMat.emissive.setHex(0x0891b2);
+            arrowMat.emissiveIntensity = 0.5;
+          }
+        }
+
+        function wrapYawDeg(deg) {
+          var d = deg % 360;
+          if (d < 0) d += 360;
+          return d;
+        }
 
         // Compute plane normal, origin, and orthonormal 2D basis (uAxis, vAxis)
         function getPlaneBasis() {
@@ -693,13 +728,14 @@
         // 6. INTERACTIVE VERTEX HANDLES (BLUE BASE + AMBER HEIGHT/APEX)
         // ---------------------------------------------------------------------
         var vertexHandles = [];
-        var hitSphereGeo = new THREE.SphereGeometry(0.28, 12, 10);
+        // Hit + visual radii are 1/3 of the original sizes for less occlusion
+        var hitSphereGeo = new THREE.SphereGeometry(0.28 / 3, 12, 10);
         var invisibleHitMat = new THREE.MeshBasicMaterial({
           transparent: true,
           opacity: 0,
           depthWrite: false
         });
-        var visualSphereGeo = new THREE.SphereGeometry(0.11, 20, 16);
+        var visualSphereGeo = new THREE.SphereGeometry(0.11 / 3, 20, 16);
 
         var blueHandleMat = new THREE.MeshStandardMaterial({
           color: 0x38bdf8,
@@ -1330,7 +1366,8 @@
                   break;
                 }
               }
-              return hasLongStraight ? 'Truncated Ellipse' : 'Ellipse';
+              // Truncated curves are neither a polygon, circle, nor ellipse
+              return hasLongStraight ? 'non-linear figure' : 'Ellipse';
             }
             return 'Ellipse';
           }
@@ -1340,9 +1377,9 @@
             var coneHalfAngle = Math.atan2(state.cone.radius, state.cone.height);
             var planeTilt = THREE.MathUtils.degToRad(pitchAbs);
             var slopeAngle = Math.PI / 2 - coneHalfAngle;
-            if (Math.abs(planeTilt - slopeAngle) < 0.06) return 'Parabolic Section';
+            if (Math.abs(planeTilt - slopeAngle) < 0.06) return 'non-linear figure';
             if (planeTilt > slopeAngle) {
-              return Math.abs(state.plane.offset) < 0.05 ? 'Triangle' : 'Hyperbolic Section';
+              return Math.abs(state.plane.offset) < 0.05 ? 'Triangle' : 'non-linear figure';
             }
             return 'Ellipse';
           }
@@ -1709,6 +1746,7 @@
           }
 
           // 2) Check slicing plane direct drag (left click / primary touch)
+          // Drag moves location (offset) and tilts angle/direction (pitch/yaw)
           if (e.button === 0 && state.showPlane && !e.shiftKey) {
             var planeHits = raycaster.intersectObjects(planePickables, false);
             if (planeHits.length > 0) {
@@ -1724,14 +1762,20 @@
               var hitStart = new THREE.Vector3();
               raycaster.ray.intersectPlane(slidePlane, hitStart);
 
+              planeDragActive = true;
+              setPlaneHighlight(true);
               activeDrag = {
                 mode: 'plane',
                 slidePlane: slidePlane,
                 normal: basis.normal.clone(),
-                startHit: hitStart,
-                startOffset: state.plane.offset
+                uAxis: basis.uAxis.clone(),
+                vAxis: basis.vAxis.clone(),
+                startHit: hitStart.clone(),
+                startOffset: state.plane.offset,
+                startPitch: state.plane.pitchDeg,
+                startYaw: state.plane.yawDeg
               };
-              renderer.domElement.style.cursor = 'ns-resize';
+              renderer.domElement.style.cursor = 'move';
               renderer.domElement.setPointerCapture(e.pointerId);
               return;
             }
@@ -1786,6 +1830,7 @@
             hoveredHandle = found;
 
             if (hoveredHandle) {
+              setPlaneHighlight(false);
               hoveredHandle.userData.visualMesh.material = hoverHandleMat;
               hoveredHandle.userData.visualMesh.scale.setScalar(hoveredHandle.userData.defaultScale * 1.25);
               renderer.domElement.style.cursor = 'grab';
@@ -1795,10 +1840,12 @@
             if (state.showPlane) {
               var ph = raycaster.intersectObjects(planePickables, false);
               if (ph.length > 0) {
-                renderer.domElement.style.cursor = 'ns-resize';
+                setPlaneHighlight(true);
+                renderer.domElement.style.cursor = 'move';
                 return;
               }
             }
+            setPlaneHighlight(false);
             renderer.domElement.style.cursor = 'default';
             return;
           }
@@ -1892,8 +1939,23 @@
             var pHit = new THREE.Vector3();
             if (!raycaster.ray.intersectPlane(activeDrag.slidePlane, pHit)) return;
             var diff = pHit.clone().sub(activeDrag.startHit);
+
+            // Location: move along the plane normal
             var proj = diff.dot(activeDrag.normal);
             state.plane.offset = THREE.MathUtils.clamp(activeDrag.startOffset + proj, -2.6, 2.6);
+
+            // Angle / direction: tilt from motion tangent to the cutting plane
+            var tangent = diff.clone().addScaledVector(activeDrag.normal, -proj);
+            var tu = tangent.dot(activeDrag.uAxis);
+            var tv = tangent.dot(activeDrag.vAxis);
+            var angSens = 28; // degrees per world unit of tangential drag
+            state.plane.yawDeg = wrapYawDeg(activeDrag.startYaw + tu * angSens);
+            state.plane.pitchDeg = THREE.MathUtils.clamp(
+              activeDrag.startPitch - tv * angSens,
+              0,
+              90
+            );
+
             syncPlaneSlidersUI();
             updateSliceAndView();
           }
@@ -1904,7 +1966,12 @@
           if (activePointers.size < 2 && activeDrag && activeDrag.mode === 'pinch') {
             activeDrag = null;
           } else if (activePointers.size === 0) {
+            var wasPlaneDrag = activeDrag && activeDrag.mode === 'plane';
             activeDrag = null;
+            if (wasPlaneDrag) {
+              planeDragActive = false;
+              setPlaneHighlight(false);
+            }
           }
           renderer.domElement.style.cursor = 'default';
           try {
