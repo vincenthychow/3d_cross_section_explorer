@@ -1,0 +1,2232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>3D Cross-Section Explorer</title>
+
+  <!-- Tailwind CSS for clean responsive UI -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Classic Three.js r128 (no ES module importmaps for maximum iframe compatibility) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    /* Guaranteed full-viewport sizing even before Tailwind loads */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b1120;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #f1f5f9;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #app-shell {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #viewport-container {
+      flex: 1;
+      position: relative;
+      min-width: 0;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 42%, #17233a 0%, #0b1120 75%, #060a14 100%);
+      touch-action: none;
+    }
+
+    #viewport-container canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      outline: none;
+    }
+
+    /* Sleek custom range sliders */
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      background: #334155;
+      border-radius: 9999px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #6366f1;
+      border: 2px solid #f8fafc;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+      transition: transform 0.12s ease, background-color 0.12s ease;
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+      background: #818cf8;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #6366f1;
+      border: 2px solid #f8fafc;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+      transition: transform 0.12s ease, background-color 0.12s ease;
+    }
+
+    /* Cyan accent for slicing plane sliders */
+    input[type="range"].plane-slider::-webkit-slider-thumb {
+      background: #06b6d4;
+    }
+    input[type="range"].plane-slider::-webkit-slider-thumb:hover {
+      background: #22d3ee;
+    }
+    input[type="range"].plane-slider::-moz-range-thumb {
+      background: #06b6d4;
+    }
+
+    /* Subtle dark scrollbar */
+    .sidebar-scroll::-webkit-scrollbar {
+      width: 5px;
+    }
+    .sidebar-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .sidebar-scroll::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 9999px;
+    }
+    .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+
+    /* Mobile sidebar slide transition */
+    #sidebar {
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    @media (max-width: 767px) {
+      #sidebar.sidebar-closed {
+        transform: translateX(-100%);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app-shell">
+    <!-- Left Dark Slate Control Sidebar -->
+    <aside id="sidebar" class="fixed md:relative z-30 top-0 left-0 h-full w-80 max-w-[86vw] bg-slate-900/95 text-slate-100 backdrop-blur-md border-r border-slate-800 shadow-2xl flex flex-col shrink-0">
+      <!-- Header -->
+      <div class="px-4 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 shrink-0">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 12.5l16-3" class="text-cyan-300" stroke="currentColor" />
+            </svg>
+          </div>
+          <div>
+            <h1 class="text-sm font-bold tracking-tight text-white leading-tight">Cross-Section Explorer</h1>
+            <p class="text-[11px] text-slate-400 font-medium">Interactive 3D Geometry Lab</p>
+          </div>
+        </div>
+        <button id="close-sidebar-btn" class="md:hidden p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition" title="Close Controls">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Scrollable Controls -->
+      <div class="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-5">
+        <!-- SECTION 1: SOLID SELECTOR -->
+        <section>
+          <div class="flex items-center justify-between mb-2.5">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">1. Choose 3D Solid</h2>
+            <button id="reset-solid-btn" class="text-xs font-semibold text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-500/40 border border-indigo-500/30 px-2.5 py-1 rounded-md transition">
+              Reset to Regular
+            </button>
+          </div>
+
+          <div id="solid-tabs" class="grid grid-cols-3 gap-1.5">
+            <button data-solid="prism" class="solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition">Prism</button>
+            <button data-solid="pyramid" class="solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition">Pyramid</button>
+            <button data-solid="cuboid" class="solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition">Cuboid</button>
+            <button data-solid="cylinder" class="solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition">Cylinder</button>
+            <button data-solid="cone" class="solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition">Cone</button>
+            <button data-solid="sphere" class="solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition">Sphere</button>
+          </div>
+
+          <!-- Dynamic solid parameters -->
+          <div id="solid-params" class="mt-3 p-3.5 rounded-xl bg-slate-800/75 border border-slate-700/80 space-y-3"></div>
+        </section>
+
+        <!-- SECTION 2: SLICING PLANE CONTROLS -->
+        <section class="pt-3 border-t border-slate-800">
+          <div class="flex items-center justify-between mb-2.5">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">2. Slicing Plane</h2>
+            <button id="reset-plane-btn" class="text-xs font-semibold text-cyan-300 hover:text-white bg-cyan-500/20 hover:bg-cyan-500/40 border border-cyan-500/30 px-2.5 py-1 rounded-md transition">
+              Reset Plane
+            </button>
+          </div>
+
+          <!-- Quick Presets -->
+          <div class="grid grid-cols-3 gap-1.5 mb-3">
+            <button id="preset-horizontal" class="py-1.5 px-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+              Horizontal
+            </button>
+            <button id="preset-vertical" class="py-1.5 px-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+              Vertical
+            </button>
+            <button id="preset-diagonal" class="py-1.5 px-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+              Diagonal 45°
+            </button>
+          </div>
+
+          <!-- Precision Sliders -->
+          <div class="p-3.5 rounded-xl bg-slate-800/75 border border-slate-700/80 space-y-3">
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="font-medium text-slate-300">Offset (Slide)</span>
+                <span id="val-offset" class="font-mono font-semibold text-cyan-400">0.00</span>
+              </div>
+              <input id="slider-offset" type="range" min="-2.6" max="2.6" step="0.01" value="0" class="plane-slider" />
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="font-medium text-slate-300">Tilt (Pitch)</span>
+                <span id="val-pitch" class="font-mono font-semibold text-cyan-400">35°</span>
+              </div>
+              <input id="slider-pitch" type="range" min="-90" max="90" step="1" value="35" class="plane-slider" />
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="font-medium text-slate-300">Rotation (Yaw)</span>
+                <span id="val-yaw" class="font-mono font-semibold text-cyan-400">30°</span>
+              </div>
+              <input id="slider-yaw" type="range" min="0" max="360" step="1" value="30" class="plane-slider" />
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 3: DISPLAY OPTIONS -->
+        <section class="pt-3 border-t border-slate-800">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">3. Display Options</h2>
+
+          <div class="p-3.5 rounded-xl bg-slate-800/75 border border-slate-700/80 space-y-3">
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="font-medium text-slate-300">Solid Opacity</span>
+                <span id="val-opacity" class="font-mono font-semibold text-indigo-400">55%</span>
+              </div>
+              <input id="slider-opacity" type="range" min="0.15" max="1.0" step="0.05" value="0.55" />
+            </div>
+
+            <div class="flex items-center justify-between pt-1">
+              <label for="toggle-edges" class="text-xs font-medium text-slate-300 cursor-pointer">Show Wireframe Edges</label>
+              <input id="toggle-edges" type="checkbox" checked class="w-4 h-4 rounded accent-indigo-500 cursor-pointer" />
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label for="toggle-plane" class="text-xs font-medium text-slate-300 cursor-pointer">Show Slicing Plane</label>
+              <input id="toggle-plane" type="checkbox" checked class="w-4 h-4 rounded accent-cyan-500 cursor-pointer" />
+            </div>
+
+            <div id="toggle-handles-row" class="flex items-center justify-between">
+              <label for="toggle-handles" class="text-xs font-medium text-slate-300 cursor-pointer">Show Vertex Handles</label>
+              <input id="toggle-handles" type="checkbox" checked class="w-4 h-4 rounded accent-amber-500 cursor-pointer" />
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <!-- Main 3D Viewport Area -->
+    <main id="viewport-container">
+      <!-- Top-Left Mobile Menu Button -->
+      <button id="open-sidebar-btn" class="md:hidden absolute top-3 left-3 z-20 p-2.5 rounded-xl bg-slate-900/90 text-slate-100 border border-slate-700/80 shadow-lg hover:bg-slate-800 transition" title="Open Controls">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
+      <!-- Top-Center View Mode Switcher -->
+      <div class="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 p-1 rounded-xl bg-slate-900/90 backdrop-blur-md border border-slate-700/80 shadow-lg">
+        <button data-view="solid" class="view-mode-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition">Solid</button>
+        <button data-view="cutaway" class="view-mode-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition">Cut Away Top</button>
+        <button data-view="split" class="view-mode-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition">Split Halves</button>
+      </div>
+
+      <!-- Top-Right Live 2D Cross-Section Preview Card -->
+      <div id="preview-card" class="absolute top-14 md:top-3 right-3 z-20 w-52 sm:w-60 rounded-2xl bg-slate-900/90 backdrop-blur-md border border-slate-700/80 shadow-2xl overflow-hidden">
+        <div class="px-3 py-2 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+          <span class="text-[11px] font-bold uppercase tracking-wider text-slate-300">2D Cross-Section</span>
+          <button id="toggle-preview-btn" class="text-slate-400 hover:text-white text-xs font-semibold px-1.5 py-0.5 rounded hover:bg-slate-800 transition" title="Collapse/Expand">
+            −
+          </button>
+        </div>
+        <div id="preview-body" class="p-3 space-y-2.5">
+          <div class="relative w-full aspect-square rounded-xl bg-slate-950/90 border border-slate-800 overflow-hidden">
+            <canvas id="canvas-2d" class="w-full h-full block"></canvas>
+          </div>
+          <div class="flex items-center justify-between gap-2 text-xs">
+            <span id="shape-label" class="font-semibold text-rose-300 bg-rose-500/15 border border-rose-500/30 px-2 py-0.5 rounded-md truncate">
+              Pentagon
+            </span>
+            <span class="font-mono text-[11px] text-slate-300 shrink-0">
+              Area: <strong id="area-label" class="text-white">0.00</strong>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom-Left Interaction Hint Bar -->
+      <div class="pointer-events-none hidden sm:flex flex-col items-start gap-2 absolute bottom-4 left-4 z-10 max-w-md">
+        <div id="vertex-hint-banner" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900/90 text-slate-200 backdrop-blur-md border border-slate-700/80 shadow-md text-xs font-medium">
+          <span class="w-2.5 h-2.5 rounded-full bg-sky-400 shrink-0 shadow-[0_0_8px_#38bdf8]"></span>
+          <span>Drag <strong class="text-sky-300">blue</strong> handles to reshape base (convex or concave). Drag <strong class="text-amber-300">amber</strong> handle for height/apex.</span>
+        </div>
+        <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/85 backdrop-blur-md border border-slate-700/80 shadow-sm text-[11px] font-medium text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+          <span>Drag background to orbit</span>
+          <span class="text-slate-600">•</span>
+          <span>Scroll to zoom</span>
+          <span class="text-slate-600">•</span>
+          <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+          <span>Drag plane to slice</span>
+        </div>
+      </div>
+
+      <!-- WebGL / Library Error Fallback Overlay (hidden unless an error occurs) -->
+      <div id="error-overlay" class="hidden absolute inset-0 z-50 bg-slate-950/95 flex items-center justify-center p-6">
+        <div class="max-w-md w-full rounded-2xl bg-slate-900 border border-rose-500/40 p-6 text-center shadow-2xl space-y-3">
+          <div class="w-12 h-12 mx-auto rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86l-7.5 13A1 1 0 003.65 18.5h16.7a1 1 0 00.86-1.64l-7.5-13a1 1 0 00-1.72 0z" />
+            </svg>
+          </div>
+          <h2 class="text-base font-bold text-white">3D Viewport Initialization Error</h2>
+          <p id="error-message" class="text-xs text-slate-300 leading-relaxed"></p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Application Script with Inline Three.js Fallback -->
+  <script>
+    (function () {
+      function showErrorOverlay(msg) {
+        var overlay = document.getElementById('error-overlay');
+        var text = document.getElementById('error-message');
+        if (text) text.textContent = msg;
+        if (overlay) overlay.classList.remove('hidden');
+      }
+
+      // Ensure Three.js is available; if primary CDN failed, load jsDelivr fallback
+      function bootWhenReady() {
+        if (window.THREE) {
+          initApp();
+        } else {
+          var fallbackScript = document.createElement('script');
+          fallbackScript.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
+          fallbackScript.onload = function () {
+            if (window.THREE) {
+              initApp();
+            } else {
+              showErrorOverlay('Three.js could not be loaded from either CDN. Please check your network connection.');
+            }
+          };
+          fallbackScript.onerror = function () {
+            showErrorOverlay('Failed to load Three.js from CDN. Please verify internet access or reload the page.');
+          };
+          document.head.appendChild(fallbackScript);
+        }
+      }
+
+      if (document.readyState === 'complete') {
+        bootWhenReady();
+      } else {
+        window.addEventListener('load', bootWhenReady);
+      }
+
+      // =======================================================================
+      // MAIN APPLICATION
+      // =======================================================================
+      function initApp() {
+        var container = document.getElementById('viewport-container');
+        var canvas2d = document.getElementById('canvas-2d');
+        var ctx2d = canvas2d.getContext('2d');
+
+        // ---------------------------------------------------------------------
+        // 1. STATE MANAGEMENT
+        // ---------------------------------------------------------------------
+        function createRegularPolygonVertices(sides, radius) {
+          var verts = [];
+          for (var i = 0; i < sides; i++) {
+            var angle = (i / sides) * Math.PI * 2 - Math.PI / 2;
+            verts.push({
+              x: Math.cos(angle) * radius,
+              z: Math.sin(angle) * radius
+            });
+          }
+          return verts;
+        }
+
+        var state = {
+          solidType: 'prism', // prism | pyramid | cuboid | cylinder | cone | sphere
+          viewMode: 'solid',  // solid | cutaway | split
+          opacity: 0.55,
+          showEdges: true,
+          showPlane: true,
+          showHandles: true,
+
+          prism: {
+            sides: 5,
+            radius: 1.45,
+            height: 2.4,
+            allowOblique: false,
+            obliqueOffset: { x: 0, z: 0 },
+            baseVertices: createRegularPolygonVertices(5, 1.45)
+          },
+          pyramid: {
+            sides: 5,
+            radius: 1.55,
+            baseY: -1.15,
+            apex: new THREE.Vector3(0, 1.55, 0),
+            baseVertices: createRegularPolygonVertices(5, 1.55)
+          },
+          cuboid: {
+            width: 2.2,
+            height: 2.0,
+            depth: 1.8
+          },
+          cylinder: {
+            radius: 1.3,
+            height: 2.5
+          },
+          cone: {
+            radius: 1.45,
+            height: 2.7
+          },
+          sphere: {
+            radius: 1.55
+          },
+          plane: {
+            offset: 0.0,
+            pitchDeg: 35,
+            yawDeg: 30
+          }
+        };
+
+        // ---------------------------------------------------------------------
+        // 2. THREE.JS SCENE, CAMERA, RENDERER & LIGHTING
+        // ---------------------------------------------------------------------
+        var renderer;
+        try {
+          renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+          renderer.localClippingEnabled = true;
+          renderer.sortObjects = true;
+          container.appendChild(renderer.domElement);
+        } catch (err) {
+          showErrorOverlay('WebGL failed to initialize on this device/browser: ' + (err && err.message ? err.message : err));
+          return;
+        }
+
+        var scene = new THREE.Scene();
+
+        var camera = new THREE.PerspectiveCamera(44, 1, 0.1, 100);
+
+        // Lighting: Hemisphere + Ambient + Dual Directional for rich 3D readability
+        var hemiLight = new THREE.HemisphereLight(0xe0e7ff, 0x1e293b, 0.85);
+        scene.add(hemiLight);
+
+        var ambientLight = new THREE.AmbientLight(0xffffff, 0.35);
+        scene.add(ambientLight);
+
+        var keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        keyLight.position.set(6, 10, 7);
+        scene.add(keyLight);
+
+        var rimLight = new THREE.DirectionalLight(0x93c5fd, 0.45);
+        rimLight.position.set(-7, -4, -6);
+        scene.add(rimLight);
+
+        // Subtle studio floor grid
+        var gridHelper = new THREE.GridHelper(12, 24, 0x334155, 0x1e293b);
+        gridHelper.position.y = -2.35;
+        scene.add(gridHelper);
+
+        // ---------------------------------------------------------------------
+        // 3. CUSTOM SMOOTH SPHERICAL ORBIT CONTROLS (ZERO EXTERNAL DEPENDENCIES)
+        // ---------------------------------------------------------------------
+        var orbit = {
+          target: new THREE.Vector3(0, 0, 0),
+          spherical: new THREE.Spherical(7.4, Math.PI * 0.36, Math.PI * 0.22),
+          targetSpherical: new THREE.Spherical(7.4, Math.PI * 0.36, Math.PI * 0.22),
+          targetPan: new THREE.Vector3(0, 0, 0),
+          minRadius: 3.0,
+          maxRadius: 18.0,
+          minPhi: 0.08,
+          maxPhi: Math.PI - 0.08,
+          damping: 0.14
+        };
+
+        function updateCameraFromOrbit(immediate) {
+          if (immediate) {
+            orbit.spherical.copy(orbit.targetSpherical);
+            orbit.target.copy(orbit.targetPan);
+          } else {
+            orbit.spherical.radius += (orbit.targetSpherical.radius - orbit.spherical.radius) * orbit.damping;
+            orbit.spherical.phi += (orbit.targetSpherical.phi - orbit.spherical.phi) * orbit.damping;
+            orbit.spherical.theta += (orbit.targetSpherical.theta - orbit.spherical.theta) * orbit.damping;
+            orbit.target.lerp(orbit.targetPan, orbit.damping);
+          }
+          var offset = new THREE.Vector3().setFromSpherical(orbit.spherical);
+          camera.position.copy(orbit.target).add(offset);
+          camera.lookAt(orbit.target);
+        }
+        updateCameraFromOrbit(true);
+
+        // Resize handler using ResizeObserver + window resize
+        function resizeRenderer() {
+          var w = container.clientWidth;
+          var h = container.clientHeight;
+          if (w > 0 && h > 0) {
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h, false);
+          }
+        }
+        resizeRenderer();
+        window.addEventListener('resize', resizeRenderer);
+        if (typeof ResizeObserver !== 'undefined') {
+          var ro = new ResizeObserver(function () {
+            resizeRenderer();
+          });
+          ro.observe(container);
+        }
+
+        // ---------------------------------------------------------------------
+        // 4. SCENE GROUPS & MATERIALS
+        // ---------------------------------------------------------------------
+        // Groups for Solid/Cutaway mode and Split Halves mode
+        var solidGroup = new THREE.Group();
+        scene.add(solidGroup);
+
+        var splitTopGroup = new THREE.Group();
+        var splitBottomGroup = new THREE.Group();
+        scene.add(splitTopGroup);
+        scene.add(splitBottomGroup);
+
+        var handlesGroup = new THREE.Group();
+        scene.add(handlesGroup);
+
+        var planeGroup = new THREE.Group();
+        scene.add(planeGroup);
+
+        // Clipping planes
+        var clipPlaneKeepBottom = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0); // keeps n·P <= offset
+        var clipPlaneKeepTop = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);     // keeps n·P >= offset
+
+        // Solid materials
+        var mainSolidMat = new THREE.MeshStandardMaterial({
+          color: 0x6366f1,
+          roughness: 0.32,
+          metalness: 0.08,
+          transparent: true,
+          opacity: state.opacity,
+          side: THREE.DoubleSide,
+          depthWrite: false
+        });
+
+        var splitBottomMat = mainSolidMat.clone();
+        splitBottomMat.clippingPlanes = [clipPlaneKeepBottom];
+
+        var splitTopMat = mainSolidMat.clone();
+        splitTopMat.color = new THREE.Color(0x818cf8);
+        splitTopMat.clippingPlanes = [clipPlaneKeepTop];
+
+        var mainEdgeMat = new THREE.LineBasicMaterial({
+          color: 0xc7d2fe,
+          transparent: true,
+          opacity: 0.72
+        });
+
+        var splitBottomEdgeMat = new THREE.LineBasicMaterial({
+          color: 0xc7d2fe,
+          transparent: true,
+          opacity: 0.72,
+          clippingPlanes: [clipPlaneKeepBottom]
+        });
+
+        var splitTopEdgeMat = new THREE.LineBasicMaterial({
+          color: 0xe0e7ff,
+          transparent: true,
+          opacity: 0.72,
+          clippingPlanes: [clipPlaneKeepTop]
+        });
+
+        // Cross-section cap & outline materials
+        var capFillMat = new THREE.MeshStandardMaterial({
+          color: 0xf43f5e,
+          emissive: 0xbe123c,
+          emissiveIntensity: 0.45,
+          roughness: 0.35,
+          metalness: 0.05,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1
+        });
+
+        var capOutlineMat = new THREE.LineBasicMaterial({
+          color: 0xfef08a,
+          linewidth: 2
+        });
+
+        // ---------------------------------------------------------------------
+        // 5. SLICING PLANE VISUALS (TRANSLUCENT CYAN + BORDER + NORMAL ARROW)
+        // ---------------------------------------------------------------------
+        var planeSize = 5.6;
+        var planeGeo = new THREE.PlaneGeometry(planeSize, planeSize);
+        var planeMat = new THREE.MeshBasicMaterial({
+          color: 0x06b6d4,
+          transparent: true,
+          opacity: 0.16,
+          side: THREE.DoubleSide,
+          depthWrite: false
+        });
+        var slicingPlaneMesh = new THREE.Mesh(planeGeo, planeMat);
+        slicingPlaneMesh.userData = { type: 'plane' };
+        planeGroup.add(slicingPlaneMesh);
+
+        // Crisp cyan border
+        var planeBorderGeo = new THREE.EdgesGeometry(planeGeo);
+        var planeBorderMat = new THREE.LineBasicMaterial({
+          color: 0x22d3ee,
+          transparent: true,
+          opacity: 0.85
+        });
+        var slicingPlaneBorder = new THREE.LineSegments(planeBorderGeo, planeBorderMat);
+        planeGroup.add(slicingPlaneBorder);
+
+        // Subtle crosshairs on the plane
+        var crossPts = [
+          new THREE.Vector3(-planeSize / 2, 0, 0), new THREE.Vector3(planeSize / 2, 0, 0),
+          new THREE.Vector3(0, -planeSize / 2, 0), new THREE.Vector3(0, planeSize / 2, 0)
+        ];
+        var crossGeo = new THREE.BufferGeometry().setFromPoints(crossPts);
+        var crossMat = new THREE.LineBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.25 });
+        planeGroup.add(new THREE.LineSegments(crossGeo, crossMat));
+
+        // Normal Arrow (aligned along local +Z of planeGroup since PlaneGeometry lies in XY with normal +Z)
+        var arrowGroup = new THREE.Group();
+        var shaftGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.72, 12);
+        shaftGeo.rotateX(Math.PI / 2);
+        shaftGeo.translate(0, 0, 0.36);
+        var arrowMat = new THREE.MeshStandardMaterial({
+          color: 0x22d3ee,
+          emissive: 0x0891b2,
+          emissiveIntensity: 0.5,
+          roughness: 0.25
+        });
+        var shaftMesh = new THREE.Mesh(shaftGeo, arrowMat);
+        shaftMesh.userData = { type: 'plane' };
+        arrowGroup.add(shaftMesh);
+
+        var headGeo = new THREE.ConeGeometry(0.11, 0.26, 16);
+        headGeo.rotateX(Math.PI / 2);
+        headGeo.translate(0, 0, 0.84);
+        var headMesh = new THREE.Mesh(headGeo, arrowMat);
+        headMesh.userData = { type: 'plane' };
+        arrowGroup.add(headMesh);
+        planeGroup.add(arrowGroup);
+
+        var planePickables = [slicingPlaneMesh, shaftMesh, headMesh];
+
+        // Compute plane normal, origin, and orthonormal 2D basis (uAxis, vAxis)
+        function getPlaneBasis() {
+          var pitch = THREE.MathUtils.degToRad(state.plane.pitchDeg);
+          var yaw = THREE.MathUtils.degToRad(state.plane.yawDeg);
+          var normal = new THREE.Vector3(
+            Math.sin(pitch) * Math.sin(yaw),
+            Math.cos(pitch),
+            Math.sin(pitch) * Math.cos(yaw)
+          ).normalize();
+
+          // Choose a stable reference vector to construct orthonormal uAxis and vAxis
+          var ref = Math.abs(normal.y) < 0.92 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+          var uAxis = new THREE.Vector3().crossVectors(ref, normal).normalize();
+          var vAxis = new THREE.Vector3().crossVectors(normal, uAxis).normalize();
+          var origin = normal.clone().multiplyScalar(state.plane.offset);
+
+          return { normal: normal, uAxis: uAxis, vAxis: vAxis, origin: origin, offset: state.plane.offset };
+        }
+
+        function updatePlaneVisuals(basis) {
+          planeGroup.visible = state.showPlane;
+          planeGroup.position.copy(basis.origin);
+          var rotMat = new THREE.Matrix4().makeBasis(basis.uAxis, basis.vAxis, basis.normal);
+          planeGroup.quaternion.setFromRotationMatrix(rotMat);
+        }
+
+        // ---------------------------------------------------------------------
+        // 6. INTERACTIVE VERTEX HANDLES (BLUE BASE + AMBER HEIGHT/APEX)
+        // ---------------------------------------------------------------------
+        var vertexHandles = [];
+        var hitSphereGeo = new THREE.SphereGeometry(0.28, 12, 10);
+        var invisibleHitMat = new THREE.MeshBasicMaterial({
+          transparent: true,
+          opacity: 0,
+          depthWrite: false
+        });
+        var visualSphereGeo = new THREE.SphereGeometry(0.11, 20, 16);
+
+        var blueHandleMat = new THREE.MeshStandardMaterial({
+          color: 0x38bdf8,
+          emissive: 0x0284c7,
+          emissiveIntensity: 0.65,
+          roughness: 0.2
+        });
+        var amberHandleMat = new THREE.MeshStandardMaterial({
+          color: 0xfbbf24,
+          emissive: 0xd97706,
+          emissiveIntensity: 0.7,
+          roughness: 0.2
+        });
+        var hoverHandleMat = new THREE.MeshStandardMaterial({
+          color: 0xfef08a,
+          emissive: 0xf59e0b,
+          emissiveIntensity: 0.95,
+          roughness: 0.15
+        });
+
+        function getCentroidXZ(verts) {
+          var sx = 0, sz = 0;
+          for (var i = 0; i < verts.length; i++) {
+            sx += verts[i].x;
+            sz += verts[i].z;
+          }
+          return { x: sx / verts.length, z: sz / verts.length };
+        }
+
+        function addHandle(pos, mat, scale, meta) {
+          var hit = new THREE.Mesh(hitSphereGeo, invisibleHitMat);
+          hit.position.copy(pos);
+
+          var vis = new THREE.Mesh(visualSphereGeo, mat);
+          vis.scale.setScalar(scale);
+          vis.renderOrder = 10;
+          hit.add(vis);
+
+          hit.userData = Object.assign({}, meta, {
+            type: 'vertex',
+            visualMesh: vis,
+            defaultMat: mat,
+            defaultScale: scale
+          });
+          handlesGroup.add(hit);
+          vertexHandles.push(hit);
+        }
+
+        function rebuildVertexHandles() {
+          while (handlesGroup.children.length > 0) {
+            handlesGroup.remove(handlesGroup.children[0]);
+          }
+          vertexHandles = [];
+
+          var canShow = state.showHandles &&
+            (state.solidType === 'prism' || state.solidType === 'pyramid') &&
+            state.viewMode !== 'split';
+          handlesGroup.visible = canShow;
+
+          if (state.solidType === 'prism') {
+            var halfH = state.prism.height / 2;
+            var off = state.prism.obliqueOffset;
+            for (var i = 0; i < state.prism.baseVertices.length; i++) {
+              var v = state.prism.baseVertices[i];
+              addHandle(new THREE.Vector3(v.x, -halfH, v.z), blueHandleMat, 1.0, {
+                role: 'prism-bottom',
+                index: i
+              });
+              addHandle(new THREE.Vector3(v.x + off.x, halfH, v.z + off.z), blueHandleMat, 1.0, {
+                role: 'prism-top',
+                index: i
+              });
+            }
+            var c = getCentroidXZ(state.prism.baseVertices);
+            addHandle(new THREE.Vector3(c.x + off.x, halfH, c.z + off.z), amberHandleMat, 1.25, {
+              role: 'prism-center',
+              index: 0
+            });
+          } else if (state.solidType === 'pyramid') {
+            var by = state.pyramid.baseY;
+            for (var j = 0; j < state.pyramid.baseVertices.length; j++) {
+              var pv = state.pyramid.baseVertices[j];
+              addHandle(new THREE.Vector3(pv.x, by, pv.z), blueHandleMat, 1.0, {
+                role: 'pyramid-base',
+                index: j
+              });
+            }
+            addHandle(state.pyramid.apex.clone(), amberHandleMat, 1.28, {
+              role: 'pyramid-apex',
+              index: 0
+            });
+          }
+        }
+
+        function syncVertexHandlePositions() {
+          var canShow = state.showHandles &&
+            (state.solidType === 'prism' || state.solidType === 'pyramid') &&
+            state.viewMode !== 'split';
+          handlesGroup.visible = canShow;
+
+          if (state.solidType === 'prism') {
+            var halfH = state.prism.height / 2;
+            var off = state.prism.obliqueOffset;
+            var c = getCentroidXZ(state.prism.baseVertices);
+            for (var i = 0; i < vertexHandles.length; i++) {
+              var h = vertexHandles[i];
+              var role = h.userData.role;
+              if (role === 'prism-bottom') {
+                var bv = state.prism.baseVertices[h.userData.index];
+                h.position.set(bv.x, -halfH, bv.z);
+              } else if (role === 'prism-top') {
+                var tv = state.prism.baseVertices[h.userData.index];
+                h.position.set(tv.x + off.x, halfH, tv.z + off.z);
+              } else if (role === 'prism-center') {
+                h.position.set(c.x + off.x, halfH, c.z + off.z);
+              }
+            }
+          } else if (state.solidType === 'pyramid') {
+            var by = state.pyramid.baseY;
+            for (var j = 0; j < vertexHandles.length; j++) {
+              var ph = vertexHandles[j];
+              if (ph.userData.role === 'pyramid-base') {
+                var pbv = state.pyramid.baseVertices[ph.userData.index];
+                ph.position.set(pbv.x, by, pbv.z);
+              } else if (ph.userData.role === 'pyramid-apex') {
+                ph.position.copy(state.pyramid.apex);
+              }
+            }
+          }
+        }
+
+        // ---------------------------------------------------------------------
+        // 7. POLYGON VALIDATION (SELF-INTERSECTION PREVENTION)
+        // ---------------------------------------------------------------------
+        function signedAreaXZ(verts) {
+          var area = 0;
+          var n = verts.length;
+          for (var i = 0; i < n; i++) {
+            var a = verts[i];
+            var b = verts[(i + 1) % n];
+            area += (a.x * b.z - b.x * a.z);
+          }
+          return area * 0.5;
+        }
+
+        function segmentsIntersectXZ(a, b, c, d) {
+          function cross(p, q, r) {
+            return (q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x);
+          }
+          var d1 = cross(a, b, c);
+          var d2 = cross(a, b, d);
+          var d3 = cross(c, d, a);
+          var d4 = cross(c, d, b);
+
+          if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+              ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+            return true;
+          }
+
+          function onSeg(p, q, r) {
+            return Math.min(p.x, r.x) - 1e-6 <= q.x && q.x <= Math.max(p.x, r.x) + 1e-6 &&
+                   Math.min(p.z, r.z) - 1e-6 <= q.z && q.z <= Math.max(p.z, r.z) + 1e-6;
+          }
+
+          if (Math.abs(d1) < 1e-6 && onSeg(a, c, b)) return true;
+          if (Math.abs(d2) < 1e-6 && onSeg(a, d, b)) return true;
+          if (Math.abs(d3) < 1e-6 && onSeg(c, a, d)) return true;
+          if (Math.abs(d4) < 1e-6 && onSeg(c, b, d)) return true;
+          return false;
+        }
+
+        function isSimplePolygonXZ(verts) {
+          var n = verts.length;
+          if (n < 3) return false;
+
+          // Reject collapsed edges
+          for (var i = 0; i < n; i++) {
+            var a = verts[i];
+            var b = verts[(i + 1) % n];
+            if (Math.hypot(b.x - a.x, b.z - a.z) < 0.18) return false;
+          }
+
+          // Reject near-zero area
+          if (Math.abs(signedAreaXZ(verts)) < 0.08) return false;
+
+          // Check all non-adjacent edge pairs
+          for (var i2 = 0; i2 < n; i2++) {
+            var p1 = verts[i2];
+            var p2 = verts[(i2 + 1) % n];
+            for (var j = i2 + 2; j < n; j++) {
+              if (i2 === 0 && j === n - 1) continue;
+              var q1 = verts[j];
+              var q2 = verts[(j + 1) % n];
+              if (segmentsIntersectXZ(p1, p2, q1, q2)) return false;
+            }
+          }
+          return true;
+        }
+
+        // Attempts target move with smooth single-axis sliding fallback
+        function tryMoveBaseVertex(verts, index, newX, newZ) {
+          var oldX = verts[index].x;
+          var oldZ = verts[index].z;
+
+          verts[index].x = newX;
+          verts[index].z = newZ;
+          if (isSimplePolygonXZ(verts)) return true;
+
+          verts[index].x = newX;
+          verts[index].z = oldZ;
+          if (isSimplePolygonXZ(verts)) return true;
+
+          verts[index].x = oldX;
+          verts[index].z = newZ;
+          if (isSimplePolygonXZ(verts)) return true;
+
+          verts[index].x = oldX;
+          verts[index].z = oldZ;
+          return false;
+        }
+
+        // ---------------------------------------------------------------------
+        // 8. SOLID GEOMETRY BUILDERS (CONVEX & CONCAVE SUPPORT)
+        // ---------------------------------------------------------------------
+        function buildPrismGeometry() {
+          var rawVerts = state.prism.baseVertices;
+          var verts = rawVerts.slice();
+          if (signedAreaXZ(verts) < 0) verts.reverse();
+
+          var n = verts.length;
+          var halfH = state.prism.height / 2;
+          var off = state.prism.obliqueOffset;
+
+          var contour2D = verts.map(function (v) { return new THREE.Vector2(v.x, v.z); });
+          var faceTris = [];
+          try {
+            faceTris = THREE.ShapeUtils.triangulateShape(contour2D, []);
+          } catch (e) {
+            faceTris = [];
+          }
+
+          var positions = [];
+          function pushTri(a, b, c) {
+            positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+          }
+
+          var bottomPts = verts.map(function (v) { return new THREE.Vector3(v.x, -halfH, v.z); });
+          var topPts = verts.map(function (v) { return new THREE.Vector3(v.x + off.x, halfH, v.z + off.z); });
+
+          // Bottom & Top faces (verified winding for outward normals)
+          for (var i = 0; i < faceTris.length; i++) {
+            var tri = faceTris[i];
+            var i0 = tri[0], i1 = tri[1], i2 = tri[2];
+            // Check 2D orientation of triangle in X-Z
+            var crossXZ = (verts[i1].x - verts[i0].x) * (verts[i2].z - verts[i0].z) -
+                          (verts[i1].z - verts[i0].z) * (verts[i2].x - verts[i0].x);
+            if (crossXZ < 0) {
+              var tmp = i1; i1 = i2; i2 = tmp;
+            }
+            // Bottom face (normal -Y)
+            pushTri(bottomPts[i0], bottomPts[i1], bottomPts[i2]);
+            // Top face (normal +Y)
+            pushTri(topPts[i0], topPts[i2], topPts[i1]);
+          }
+
+          // Lateral faces
+          for (var s = 0; s < n; s++) {
+            var next = (s + 1) % n;
+            pushTri(bottomPts[s], topPts[s], topPts[next]);
+            pushTri(bottomPts[s], topPts[next], bottomPts[next]);
+          }
+
+          var geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geo.computeVertexNormals();
+          return geo;
+        }
+
+        function buildPyramidGeometry() {
+          var rawVerts = state.pyramid.baseVertices;
+          var verts = rawVerts.slice();
+          if (signedAreaXZ(verts) < 0) verts.reverse();
+
+          var n = verts.length;
+          var by = state.pyramid.baseY;
+          var apex = state.pyramid.apex;
+
+          var contour2D = verts.map(function (v) { return new THREE.Vector2(v.x, v.z); });
+          var faceTris = [];
+          try {
+            faceTris = THREE.ShapeUtils.triangulateShape(contour2D, []);
+          } catch (e) {
+            faceTris = [];
+          }
+
+          var positions = [];
+          function pushTri(a, b, c) {
+            positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+          }
+
+          var basePts = verts.map(function (v) { return new THREE.Vector3(v.x, by, v.z); });
+
+          // Base face (normal -Y)
+          for (var i = 0; i < faceTris.length; i++) {
+            var tri = faceTris[i];
+            var i0 = tri[0], i1 = tri[1], i2 = tri[2];
+            var crossXZ = (verts[i1].x - verts[i0].x) * (verts[i2].z - verts[i0].z) -
+                          (verts[i1].z - verts[i0].z) * (verts[i2].x - verts[i0].x);
+            if (crossXZ < 0) {
+              var tmp = i1; i1 = i2; i2 = tmp;
+            }
+            pushTri(basePts[i0], basePts[i1], basePts[i2]);
+          }
+
+          // Triangular lateral faces to apex
+          for (var s = 0; s < n; s++) {
+            var next = (s + 1) % n;
+            pushTri(basePts[s], apex, basePts[next]);
+          }
+
+          var geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geo.computeVertexNormals();
+          return geo;
+        }
+
+        function buildCurrentSolidGeometry() {
+          var t = state.solidType;
+          if (t === 'prism') return buildPrismGeometry();
+          if (t === 'pyramid') return buildPyramidGeometry();
+          if (t === 'cuboid') {
+            return new THREE.BoxGeometry(state.cuboid.width, state.cuboid.height, state.cuboid.depth);
+          }
+          if (t === 'cylinder') {
+            return new THREE.CylinderGeometry(state.cylinder.radius, state.cylinder.radius, state.cylinder.height, 48, 1);
+          }
+          if (t === 'cone') {
+            return new THREE.ConeGeometry(state.cone.radius, state.cone.height, 48, 1);
+          }
+          if (t === 'sphere') {
+            return new THREE.SphereGeometry(state.sphere.radius, 36, 24);
+          }
+          return new THREE.BoxGeometry(2, 2, 2);
+        }
+
+        // Extract flat list of triangles from any BufferGeometry (indexed or non-indexed)
+        function extractTriangles(geo) {
+          var tris = [];
+          var pos = geo.getAttribute('position');
+          if (!pos) return tris;
+          var idx = geo.getIndex();
+          if (idx) {
+            var arr = idx.array;
+            for (var i = 0; i < arr.length; i += 3) {
+              tris.push([
+                new THREE.Vector3().fromBufferAttribute(pos, arr[i]),
+                new THREE.Vector3().fromBufferAttribute(pos, arr[i + 1]),
+                new THREE.Vector3().fromBufferAttribute(pos, arr[i + 2])
+              ]);
+            }
+          } else {
+            for (var j = 0; j < pos.count; j += 3) {
+              tris.push([
+                new THREE.Vector3().fromBufferAttribute(pos, j),
+                new THREE.Vector3().fromBufferAttribute(pos, j + 1),
+                new THREE.Vector3().fromBufferAttribute(pos, j + 2)
+              ]);
+            }
+          }
+          return tris;
+        }
+
+        // ---------------------------------------------------------------------
+        // 9. EXACT TRIANGLE-PLANE INTERSECTION & LOOP CHAINING
+        // ---------------------------------------------------------------------
+        function computeCrossSectionLoops(triangles, basis) {
+          var segments = [];
+          var n = basis.normal;
+          var off = basis.offset;
+
+          for (var i = 0; i < triangles.length; i++) {
+            var tri = triangles[i];
+            var v0 = tri[0], v1 = tri[1], v2 = tri[2];
+
+            // Tiny nudge prevents exact-vertex-on-plane degeneracies and guarantees manifold loops
+            var d0 = v0.dot(n) - off; if (Math.abs(d0) < 1e-6) d0 = 1e-6;
+            var d1 = v1.dot(n) - off; if (Math.abs(d1) < 1e-6) d1 = 1e-6;
+            var d2 = v2.dot(n) - off; if (Math.abs(d2) < 1e-6) d2 = 1e-6;
+
+            var pts = [];
+            function checkEdge(a, b, da, db) {
+              if ((da > 0 && db < 0) || (da < 0 && db > 0)) {
+                var t = da / (da - db);
+                pts.push(new THREE.Vector3(
+                  a.x + (b.x - a.x) * t,
+                  a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t
+                ));
+              }
+            }
+
+            checkEdge(v0, v1, d0, d1);
+            checkEdge(v1, v2, d1, d2);
+            checkEdge(v2, v0, d2, d0);
+
+            if (pts.length === 2 && pts[0].distanceToSquared(pts[1]) > 1e-10) {
+              segments.push([pts[0], pts[1]]);
+            }
+          }
+
+          if (segments.length < 3) return [];
+
+          // Chain unordered segments into ordered closed loops
+          var used = new Uint8Array(segments.length);
+          var loops3D = [];
+          var tolSq = 1e-4;
+
+          for (var s = 0; s < segments.length; s++) {
+            if (used[s]) continue;
+            used[s] = 1;
+            var chain = [segments[s][0], segments[s][1]];
+            var growing = true;
+
+            while (growing) {
+              growing = false;
+              var tail = chain[chain.length - 1];
+              var bestIdx = -1;
+              var bestDist = tolSq;
+              var bestReverse = false;
+
+              for (var k = 0; k < segments.length; k++) {
+                if (used[k]) continue;
+                var dA = tail.distanceToSquared(segments[k][0]);
+                if (dA < bestDist) {
+                  bestDist = dA;
+                  bestIdx = k;
+                  bestReverse = false;
+                }
+                var dB = tail.distanceToSquared(segments[k][1]);
+                if (dB < bestDist) {
+                  bestDist = dB;
+                  bestIdx = k;
+                  bestReverse = true;
+                }
+              }
+
+              if (bestIdx !== -1) {
+                used[bestIdx] = 1;
+                var nextPt = bestReverse ? segments[bestIdx][0] : segments[bestIdx][1];
+                if (nextPt.distanceToSquared(chain[0]) < tolSq) {
+                  break; // loop closed
+                }
+                if (nextPt.distanceToSquared(tail) > 1e-9) {
+                  chain.push(nextPt);
+                }
+                growing = true;
+              }
+            }
+
+            if (chain.length >= 3) {
+              loops3D.push(chain);
+            }
+          }
+
+          // Project each 3D loop onto plane's 2D orthonormal basis
+          var loops2D = [];
+          for (var l = 0; l < loops3D.length; l++) {
+            var c3 = loops3D[l];
+            var pts2 = [];
+            for (var p = 0; p < c3.length; p++) {
+              var rel = c3[p].clone().sub(basis.origin);
+              pts2.push(new THREE.Vector2(rel.dot(basis.uAxis), rel.dot(basis.vAxis)));
+            }
+            var area = computeArea2D(pts2);
+            if (Math.abs(area) > 1e-4) {
+              if (area < 0) {
+                pts2.reverse();
+                c3.reverse();
+                area = -area;
+              }
+              loops2D.push({ pts2: pts2, pts3: c3, area: area });
+            }
+          }
+
+          return loops2D;
+        }
+
+        function computeArea2D(pts) {
+          var a = 0;
+          for (var i = 0; i < pts.length; i++) {
+            var p1 = pts[i];
+            var p2 = pts[(i + 1) % pts.length];
+            a += (p1.x * p2.y - p2.x * p1.y);
+          }
+          return a * 0.5;
+        }
+
+        function buildCapMeshAndOutline(loops, basis) {
+          var group = new THREE.Group();
+          if (!loops || loops.length === 0) return group;
+
+          var fillPositions = [];
+
+          for (var i = 0; i < loops.length; i++) {
+            var loop = loops[i];
+            var pts2 = loop.pts2;
+            var pts3 = loop.pts3;
+
+            // Triangulate 2D loop (supports both convex & concave polygons)
+            var tris = [];
+            try {
+              tris = THREE.ShapeUtils.triangulateShape(pts2, []);
+            } catch (e) {
+              tris = [];
+            }
+
+            for (var t = 0; t < tris.length; t++) {
+              var a = pts3[tris[t][0]];
+              var b = pts3[tris[t][1]];
+              var c = pts3[tris[t][2]];
+              if (a && b && c) {
+                fillPositions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+              }
+            }
+
+            // Bright outline loop
+            var outlineGeo = new THREE.BufferGeometry().setFromPoints(pts3);
+            var outlineLoop = new THREE.LineLoop(outlineGeo, capOutlineMat);
+            outlineLoop.renderOrder = 6;
+            group.add(outlineLoop);
+          }
+
+          if (fillPositions.length >= 9) {
+            var capGeo = new THREE.BufferGeometry();
+            capGeo.setAttribute('position', new THREE.Float32BufferAttribute(fillPositions, 3));
+            capGeo.computeVertexNormals();
+            var capMesh = new THREE.Mesh(capGeo, capFillMat);
+            capMesh.renderOrder = 4;
+            group.add(capMesh);
+          }
+
+          return group;
+        }
+
+        // ---------------------------------------------------------------------
+        // 10. SHAPE CLASSIFICATION & 2D CANVAS RENDERER
+        // ---------------------------------------------------------------------
+        function simplifyPolygon2D(pts, angleTol) {
+          if (pts.length <= 3) return pts;
+          var cleaned = [];
+          var n = pts.length;
+          for (var i = 0; i < n; i++) {
+            var prev = pts[(i - 1 + n) % n];
+            var curr = pts[i];
+            var next = pts[(i + 1) % n];
+            var v1x = curr.x - prev.x, v1y = curr.y - prev.y;
+            var v2x = next.x - curr.x, v2y = next.y - curr.y;
+            var l1 = Math.hypot(v1x, v1y);
+            var l2 = Math.hypot(v2x, v2y);
+            if (l1 < 1e-4 || l2 < 1e-4) continue;
+            var dot = (v1x * v2x + v1y * v2y) / (l1 * l2);
+            if (dot < Math.cos(angleTol)) {
+              cleaned.push(curr);
+            }
+          }
+          return cleaned.length >= 3 ? cleaned : pts;
+        }
+
+        function isConcave2D(pts) {
+          var n = pts.length;
+          if (n < 4) return false;
+          var pos = false, neg = false;
+          for (var i = 0; i < n; i++) {
+            var a = pts[i], b = pts[(i + 1) % n], c = pts[(i + 2) % n];
+            var cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+            if (cross > 1e-4) pos = true;
+            if (cross < -1e-4) neg = true;
+            if (pos && neg) return true;
+          }
+          return false;
+        }
+
+        function classifyQuadrilateral(pts) {
+          var sides = [];
+          var dirs = [];
+          for (var i = 0; i < 4; i++) {
+            var a = pts[i], b = pts[(i + 1) % 4];
+            var dx = b.x - a.x, dy = b.y - a.y;
+            var len = Math.hypot(dx, dy);
+            sides.push(len);
+            dirs.push({ x: dx / (len || 1), y: dy / (len || 1) });
+          }
+          var par02 = Math.abs(dirs[0].x * dirs[2].y - dirs[0].y * dirs[2].x) < 0.06;
+          var par13 = Math.abs(dirs[1].x * dirs[3].y - dirs[1].y * dirs[3].x) < 0.06;
+          var right01 = Math.abs(dirs[0].x * dirs[1].x + dirs[0].y * dirs[1].y) < 0.06;
+          var allEq = sides.every(function (s) { return Math.abs(s - sides[0]) / (sides[0] || 1) < 0.06; });
+
+          if (par02 && par13) {
+            if (right01 && allEq) return 'Square';
+            if (right01) return 'Rectangle';
+            if (allEq) return 'Rhombus';
+            return 'Parallelogram';
+          }
+          if (par02 || par13) return 'Trapezoid';
+          return 'Quadrilateral';
+        }
+
+        function classifyCrossSection(loops) {
+          if (!loops || loops.length === 0) return 'No Intersection';
+          var t = state.solidType;
+          var pitchAbs = Math.abs(state.plane.pitchDeg);
+
+          if (t === 'sphere') return 'Circle';
+
+          if (t === 'cylinder') {
+            if (pitchAbs < 1.5) return 'Circle';
+            if (pitchAbs > 88.5) return 'Rectangle';
+            // Check if plane cuts top or bottom cap
+            var simpCyl = simplifyPolygon2D(loops[0].pts2, 0.25);
+            if (simpCyl.length >= 2 && simpCyl.length <= 4) {
+              // Truncated ellipse or rectangle-like
+              var hasLongStraight = false;
+              for (var ci = 0; ci < loops[0].pts2.length; ci++) {
+                var a = loops[0].pts2[ci];
+                var b = loops[0].pts2[(ci + 1) % loops[0].pts2.length];
+                if (a.distanceTo(b) > state.cylinder.radius * 0.45) {
+                  hasLongStraight = true;
+                  break;
+                }
+              }
+              return hasLongStraight ? 'Truncated Ellipse' : 'Ellipse';
+            }
+            return 'Ellipse';
+          }
+
+          if (t === 'cone') {
+            if (pitchAbs < 1.5) return 'Circle';
+            var coneHalfAngle = Math.atan2(state.cone.radius, state.cone.height);
+            var planeTilt = THREE.MathUtils.degToRad(pitchAbs);
+            var slopeAngle = Math.PI / 2 - coneHalfAngle;
+            if (Math.abs(planeTilt - slopeAngle) < 0.06) return 'Parabolic Section';
+            if (planeTilt > slopeAngle) {
+              return Math.abs(state.plane.offset) < 0.05 ? 'Triangle' : 'Hyperbolic Section';
+            }
+            return 'Ellipse';
+          }
+
+          // Polyhedra (Prism, Pyramid, Cuboid)
+          if (loops.length > 1) return loops.length + ' Polygons';
+
+          var simp = simplifyPolygon2D(loops[0].pts2, 0.06);
+          var n = simp.length;
+          var concave = isConcave2D(simp);
+
+          if (n === 3) return 'Triangle';
+          if (n === 4) return concave ? 'Concave Quad' : classifyQuadrilateral(simp);
+
+          var names = {
+            5: 'Pentagon', 6: 'Hexagon', 7: 'Heptagon', 8: 'Octagon',
+            9: 'Nonagon', 10: 'Decagon', 11: 'Hendecagon', 12: 'Dodecagon'
+          };
+          var baseName = names[n] || (n + '-gon');
+          if (concave) return 'Concave ' + baseName;
+
+          // Check regularity (equal side lengths)
+          var lens = [];
+          for (var i = 0; i < n; i++) {
+            lens.push(simp[i].distanceTo(simp[(i + 1) % n]));
+          }
+          var avg = lens.reduce(function (acc, v) { return acc + v; }, 0) / n;
+          var isReg = lens.every(function (l) { return Math.abs(l - avg) / (avg || 1) < 0.06; });
+          return (isReg ? 'Regular ' : 'Irregular ') + baseName;
+        }
+
+        var shapeLabelEl = document.getElementById('shape-label');
+        var areaLabelEl = document.getElementById('area-label');
+
+        function render2DPreview(loops) {
+          var rect = canvas2d.getBoundingClientRect();
+          var dpr = Math.min(window.devicePixelRatio || 1, 2);
+          var w = Math.max(120, Math.floor(rect.width));
+          var h = Math.max(120, Math.floor(rect.height));
+
+          if (canvas2d.width !== w * dpr || canvas2d.height !== h * dpr) {
+            canvas2d.width = w * dpr;
+            canvas2d.height = h * dpr;
+          }
+
+          ctx2d.save();
+          ctx2d.scale(dpr, dpr);
+          ctx2d.clearRect(0, 0, w, h);
+
+          // Draw subtle grid
+          var cx = w / 2;
+          var cy = h / 2;
+          var scale = w / 5.4; // True-to-scale mapping (~2.7 world units half-width)
+
+          ctx2d.strokeStyle = 'rgba(148, 163, 184, 0.14)';
+          ctx2d.lineWidth = 1;
+          for (var g = -3; g <= 3; g++) {
+            var gx = cx + g * scale;
+            var gy = cy - g * scale;
+            ctx2d.beginPath();
+            ctx2d.moveTo(gx, 0); ctx2d.lineTo(gx, h);
+            ctx2d.stroke();
+            ctx2d.beginPath();
+            ctx2d.moveTo(0, gy); ctx2d.lineTo(w, gy);
+            ctx2d.stroke();
+          }
+
+          // Center axes
+          ctx2d.strokeStyle = 'rgba(148, 163, 184, 0.32)';
+          ctx2d.beginPath();
+          ctx2d.moveTo(cx, 0); ctx2d.lineTo(cx, h);
+          ctx2d.moveTo(0, cy); ctx2d.lineTo(w, cy);
+          ctx2d.stroke();
+
+          var totalArea = 0;
+          if (loops && loops.length > 0) {
+            for (var i = 0; i < loops.length; i++) {
+              var pts = loops[i].pts2;
+              totalArea += loops[i].area;
+
+              ctx2d.beginPath();
+              for (var p = 0; p < pts.length; p++) {
+                var sx = cx + pts[p].x * scale;
+                var sy = cy - pts[p].y * scale;
+                if (p === 0) ctx2d.moveTo(sx, sy);
+                else ctx2d.lineTo(sx, sy);
+              }
+              ctx2d.closePath();
+
+              ctx2d.fillStyle = 'rgba(244, 63, 94, 0.42)';
+              ctx2d.fill();
+              ctx2d.lineWidth = 2.2;
+              ctx2d.strokeStyle = '#fef08a';
+              ctx2d.stroke();
+
+              // Draw vertex markers for polyhedra
+              if (state.solidType === 'prism' || state.solidType === 'pyramid' || state.solidType === 'cuboid') {
+                var simp = simplifyPolygon2D(pts, 0.06);
+                ctx2d.fillStyle = '#fde047';
+                for (var k = 0; k < simp.length; k++) {
+                  ctx2d.beginPath();
+                  ctx2d.arc(cx + simp[k].x * scale, cy - simp[k].y * scale, 2.8, 0, Math.PI * 2);
+                  ctx2d.fill();
+                }
+              }
+            }
+          } else {
+            ctx2d.fillStyle = '#64748b';
+            ctx2d.font = '600 11px Inter, sans-serif';
+            ctx2d.textAlign = 'center';
+            ctx2d.fillText('Move plane to intersect solid', cx, cy + 4);
+          }
+
+          ctx2d.restore();
+
+          shapeLabelEl.textContent = classifyCrossSection(loops);
+          areaLabelEl.textContent = totalArea.toFixed(2);
+        }
+
+        // ---------------------------------------------------------------------
+        // 11. SOLID + CROSS-SECTION ORCHESTRATION
+        // ---------------------------------------------------------------------
+        var currentTriangles = [];
+        var currentSolidGeo = null;
+        var currentEdgeGeo = null;
+
+        function clearGroup(grp, disposeGeos) {
+          while (grp.children.length > 0) {
+            var child = grp.children[0];
+            grp.remove(child);
+            if (disposeGeos && child.geometry) {
+              child.geometry.dispose();
+            }
+          }
+        }
+
+        function disposeCapGroup(grp) {
+          grp.traverse(function (obj) {
+            if (obj.geometry) obj.geometry.dispose();
+          });
+        }
+
+        var mainCapHolder = new THREE.Group();
+        var splitBottomCapHolder = new THREE.Group();
+        var splitTopCapHolder = new THREE.Group();
+        scene.add(mainCapHolder);
+        splitBottomGroup.add(splitBottomCapHolder);
+        splitTopGroup.add(splitTopCapHolder);
+
+        function rebuildSolidMesh(keepHandles) {
+          try {
+            if (currentSolidGeo) currentSolidGeo.dispose();
+            if (currentEdgeGeo) currentEdgeGeo.dispose();
+
+            currentSolidGeo = buildCurrentSolidGeometry();
+            currentEdgeGeo = new THREE.EdgesGeometry(currentSolidGeo, 18);
+            currentTriangles = extractTriangles(currentSolidGeo);
+
+            // Clear old solid meshes (keep cap holders inside split groups)
+            clearGroup(solidGroup, false);
+
+            // Remove old meshes from split groups while keeping cap holders
+            for (var i = splitBottomGroup.children.length - 1; i >= 0; i--) {
+              if (splitBottomGroup.children[i] !== splitBottomCapHolder) {
+                splitBottomGroup.remove(splitBottomGroup.children[i]);
+              }
+            }
+            for (var j = splitTopGroup.children.length - 1; j >= 0; j--) {
+              if (splitTopGroup.children[j] !== splitTopCapHolder) {
+                splitTopGroup.remove(splitTopGroup.children[j]);
+              }
+            }
+
+            // Main solid (used for Solid and Cut Away Top modes)
+            var mainMesh = new THREE.Mesh(currentSolidGeo, mainSolidMat);
+            mainMesh.renderOrder = 2;
+            solidGroup.add(mainMesh);
+
+            var mainEdges = new THREE.LineSegments(currentEdgeGeo, mainEdgeMat);
+            mainEdges.visible = state.showEdges;
+            mainEdges.renderOrder = 3;
+            solidGroup.add(mainEdges);
+
+            // Split halves meshes
+            var botMesh = new THREE.Mesh(currentSolidGeo, splitBottomMat);
+            botMesh.renderOrder = 2;
+            splitBottomGroup.add(botMesh);
+
+            var botEdges = new THREE.LineSegments(currentEdgeGeo, splitBottomEdgeMat);
+            botEdges.visible = state.showEdges;
+            botEdges.renderOrder = 3;
+            splitBottomGroup.add(botEdges);
+
+            var topMesh = new THREE.Mesh(currentSolidGeo, splitTopMat);
+            topMesh.renderOrder = 2;
+            splitTopGroup.add(topMesh);
+
+            var topEdges = new THREE.LineSegments(currentEdgeGeo, splitTopEdgeMat);
+            topEdges.visible = state.showEdges;
+            topEdges.renderOrder = 3;
+            splitTopGroup.add(topEdges);
+
+            if (keepHandles) {
+              syncVertexHandlePositions();
+            } else {
+              rebuildVertexHandles();
+            }
+
+            updateSliceAndView();
+          } catch (err) {
+            console.error('Solid rebuild error:', err);
+          }
+        }
+
+        function updateSliceAndView() {
+          try {
+            var basis = getPlaneBasis();
+            updatePlaneVisuals(basis);
+
+            // Clear previous cross-section caps
+            disposeCapGroup(mainCapHolder);
+            clearGroup(mainCapHolder, false);
+            disposeCapGroup(splitBottomCapHolder);
+            clearGroup(splitBottomCapHolder, false);
+            disposeCapGroup(splitTopCapHolder);
+            clearGroup(splitTopCapHolder, false);
+
+            var loops = computeCrossSectionLoops(currentTriangles, basis);
+
+            // Update material opacity and edge visibility
+            mainSolidMat.opacity = state.opacity;
+            splitBottomMat.opacity = state.opacity;
+            splitTopMat.opacity = state.opacity;
+
+            solidGroup.children.forEach(function (c) {
+              if (c.isLineSegments) c.visible = state.showEdges;
+            });
+            splitBottomGroup.children.forEach(function (c) {
+              if (c.isLineSegments) c.visible = state.showEdges;
+            });
+            splitTopGroup.children.forEach(function (c) {
+              if (c.isLineSegments) c.visible = state.showEdges;
+            });
+
+            var sep = 0.42;
+
+            if (state.viewMode === 'solid') {
+              solidGroup.visible = true;
+              splitBottomGroup.visible = false;
+              splitTopGroup.visible = false;
+              mainCapHolder.visible = true;
+
+              mainSolidMat.clippingPlanes = [];
+              mainEdgeMat.clippingPlanes = [];
+
+              mainCapHolder.add(buildCapMeshAndOutline(loops, basis));
+            } else if (state.viewMode === 'cutaway') {
+              solidGroup.visible = true;
+              splitBottomGroup.visible = false;
+              splitTopGroup.visible = false;
+              mainCapHolder.visible = true;
+
+              // Clip away everything with n·P > offset
+              clipPlaneKeepBottom.set(basis.normal.clone().negate(), basis.offset);
+              mainSolidMat.clippingPlanes = [clipPlaneKeepBottom];
+              mainEdgeMat.clippingPlanes = [clipPlaneKeepBottom];
+
+              mainCapHolder.add(buildCapMeshAndOutline(loops, basis));
+            } else if (state.viewMode === 'split') {
+              solidGroup.visible = false;
+              splitBottomGroup.visible = true;
+              splitTopGroup.visible = true;
+              mainCapHolder.visible = false;
+
+              // Position halves shifted along plane normal
+              splitBottomGroup.position.copy(basis.normal).multiplyScalar(-sep);
+              splitTopGroup.position.copy(basis.normal).multiplyScalar(sep);
+
+              // World-space clipping planes shifted by the same separation
+              clipPlaneKeepBottom.set(basis.normal.clone().negate(), basis.offset - sep);
+              clipPlaneKeepTop.set(basis.normal.clone(), -(basis.offset + sep));
+
+              splitBottomCapHolder.add(buildCapMeshAndOutline(loops, basis));
+              splitTopCapHolder.add(buildCapMeshAndOutline(loops, basis));
+            }
+
+            syncVertexHandlePositions();
+            render2DPreview(loops);
+          } catch (err) {
+            console.error('Slice update error:', err);
+          }
+        }
+
+        // ---------------------------------------------------------------------
+        // 12. POINTER & TOUCH INTERACTION (HANDLES, PLANE DRAG, ORBIT, PAN, ZOOM)
+        // ---------------------------------------------------------------------
+        var raycaster = new THREE.Raycaster();
+        var pointerNDC = new THREE.Vector2();
+        var activeDrag = null;
+        var hoveredHandle = null;
+        var activePointers = new Map();
+        var pinchStartDist = 0;
+        var pinchStartRadius = 0;
+
+        function setNDC(clientX, clientY) {
+          var rect = renderer.domElement.getBoundingClientRect();
+          pointerNDC.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+          pointerNDC.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+        }
+
+        function onPointerDown(e) {
+          if (e.target !== renderer.domElement) return;
+          activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+          // Multi-touch pinch zoom
+          if (activePointers.size === 2) {
+            activeDrag = { mode: 'pinch' };
+            var pts = Array.from(activePointers.values());
+            pinchStartDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+            pinchStartRadius = orbit.targetSpherical.radius;
+            return;
+          }
+
+          setNDC(e.clientX, e.clientY);
+          raycaster.setFromCamera(pointerNDC, camera);
+
+          // 1) Check vertex handles first (left click / primary touch)
+          if (e.button === 0 && handlesGroup.visible && vertexHandles.length > 0) {
+            var hits = raycaster.intersectObjects(vertexHandles, false);
+            if (hits.length > 0) {
+              var handle = hits[0].object;
+              var role = handle.userData.role;
+              var dragPlane;
+
+              if (role === 'prism-bottom') {
+                dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), state.prism.height / 2);
+              } else if (role === 'prism-top') {
+                dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -state.prism.height / 2);
+              } else if (role === 'pyramid-base') {
+                dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -state.pyramid.baseY);
+              } else {
+                var camDir = new THREE.Vector3();
+                camera.getWorldDirection(camDir);
+                dragPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir.negate(), handle.position);
+              }
+
+              var startHit = new THREE.Vector3();
+              raycaster.ray.intersectPlane(dragPlane, startHit);
+
+              activeDrag = {
+                mode: 'vertex',
+                handle: handle,
+                role: role,
+                index: handle.userData.index,
+                dragPlane: dragPlane,
+                startHit: startHit,
+                startHeight: state.prism.height,
+                startOblique: { x: state.prism.obliqueOffset.x, z: state.prism.obliqueOffset.z }
+              };
+              renderer.domElement.style.cursor = 'grabbing';
+              renderer.domElement.setPointerCapture(e.pointerId);
+              return;
+            }
+          }
+
+          // 2) Check slicing plane direct drag (left click / primary touch)
+          if (e.button === 0 && state.showPlane && !e.shiftKey) {
+            var planeHits = raycaster.intersectObjects(planePickables, false);
+            if (planeHits.length > 0) {
+              var basis = getPlaneBasis();
+              var camDir2 = new THREE.Vector3();
+              camera.getWorldDirection(camDir2);
+              // Construct a drag plane containing the slicing normal & facing the camera
+              var sideAxis = new THREE.Vector3().crossVectors(basis.normal, camDir2);
+              if (sideAxis.lengthSq() < 1e-4) sideAxis.set(1, 0, 0);
+              var dragNormal = new THREE.Vector3().crossVectors(basis.normal, sideAxis).normalize();
+              var slidePlane = new THREE.Plane().setFromNormalAndCoplanarPoint(dragNormal, planeHits[0].point);
+
+              var hitStart = new THREE.Vector3();
+              raycaster.ray.intersectPlane(slidePlane, hitStart);
+
+              activeDrag = {
+                mode: 'plane',
+                slidePlane: slidePlane,
+                normal: basis.normal.clone(),
+                startHit: hitStart,
+                startOffset: state.plane.offset
+              };
+              renderer.domElement.style.cursor = 'ns-resize';
+              renderer.domElement.setPointerCapture(e.pointerId);
+              return;
+            }
+          }
+
+          // 3) Right-click or Shift+Left-click => Pan; Left-click background => Orbit
+          var isPan = (e.button === 2) || (e.button === 0 && e.shiftKey);
+          activeDrag = {
+            mode: isPan ? 'pan' : 'orbit',
+            lastX: e.clientX,
+            lastY: e.clientY
+          };
+          renderer.domElement.style.cursor = isPan ? 'move' : 'grabbing';
+          renderer.domElement.setPointerCapture(e.pointerId);
+        }
+
+        function onPointerMove(e) {
+          if (activePointers.has(e.pointerId)) {
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          }
+
+          // Pinch zoom
+          if (activeDrag && activeDrag.mode === 'pinch' && activePointers.size === 2) {
+            var pts = Array.from(activePointers.values());
+            var dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+            if (dist > 10 && pinchStartDist > 10) {
+              var scale = pinchStartDist / dist;
+              orbit.targetSpherical.radius = THREE.MathUtils.clamp(
+                pinchStartRadius * scale,
+                orbit.minRadius,
+                orbit.maxRadius
+              );
+            }
+            return;
+          }
+
+          if (!activeDrag) {
+            // Hover feedback
+            setNDC(e.clientX, e.clientY);
+            raycaster.setFromCamera(pointerNDC, camera);
+
+            var found = null;
+            if (handlesGroup.visible && vertexHandles.length > 0) {
+              var hh = raycaster.intersectObjects(vertexHandles, false);
+              if (hh.length > 0) found = hh[0].object;
+            }
+
+            if (hoveredHandle && hoveredHandle !== found) {
+              hoveredHandle.userData.visualMesh.material = hoveredHandle.userData.defaultMat;
+              hoveredHandle.userData.visualMesh.scale.setScalar(hoveredHandle.userData.defaultScale);
+            }
+            hoveredHandle = found;
+
+            if (hoveredHandle) {
+              hoveredHandle.userData.visualMesh.material = hoverHandleMat;
+              hoveredHandle.userData.visualMesh.scale.setScalar(hoveredHandle.userData.defaultScale * 1.25);
+              renderer.domElement.style.cursor = 'grab';
+              return;
+            }
+
+            if (state.showPlane) {
+              var ph = raycaster.intersectObjects(planePickables, false);
+              if (ph.length > 0) {
+                renderer.domElement.style.cursor = 'ns-resize';
+                return;
+              }
+            }
+            renderer.domElement.style.cursor = 'default';
+            return;
+          }
+
+          if (activeDrag.mode === 'orbit') {
+            var dx = e.clientX - activeDrag.lastX;
+            var dy = e.clientY - activeDrag.lastY;
+            activeDrag.lastX = e.clientX;
+            activeDrag.lastY = e.clientY;
+
+            orbit.targetSpherical.theta -= dx * 0.0075;
+            orbit.targetSpherical.phi = THREE.MathUtils.clamp(
+              orbit.targetSpherical.phi - dy * 0.0075,
+              orbit.minPhi,
+              orbit.maxPhi
+            );
+            return;
+          }
+
+          if (activeDrag.mode === 'pan') {
+            var pdx = e.clientX - activeDrag.lastX;
+            var pdy = e.clientY - activeDrag.lastY;
+            activeDrag.lastX = e.clientX;
+            activeDrag.lastY = e.clientY;
+
+            var panSpeed = orbit.spherical.radius * 0.0014;
+            var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+            var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+            orbit.targetPan.addScaledVector(right, -pdx * panSpeed);
+            orbit.targetPan.addScaledVector(up, pdy * panSpeed);
+            return;
+          }
+
+          setNDC(e.clientX, e.clientY);
+          raycaster.setFromCamera(pointerNDC, camera);
+
+          if (activeDrag.mode === 'vertex') {
+            var hit = new THREE.Vector3();
+            if (!raycaster.ray.intersectPlane(activeDrag.dragPlane, hit)) return;
+
+            var clampXZ = function (val) { return THREE.MathUtils.clamp(val, -3.1, 3.1); };
+            var changed = false;
+
+            if (activeDrag.role === 'prism-bottom') {
+              changed = tryMoveBaseVertex(
+                state.prism.baseVertices,
+                activeDrag.index,
+                clampXZ(hit.x),
+                clampXZ(hit.z)
+              );
+            } else if (activeDrag.role === 'prism-top') {
+              changed = tryMoveBaseVertex(
+                state.prism.baseVertices,
+                activeDrag.index,
+                clampXZ(hit.x - state.prism.obliqueOffset.x),
+                clampXZ(hit.z - state.prism.obliqueOffset.z)
+              );
+            } else if (activeDrag.role === 'prism-center') {
+              var delta = hit.clone().sub(activeDrag.startHit);
+              state.prism.height = THREE.MathUtils.clamp(activeDrag.startHeight + delta.y * 2, 0.5, 4.4);
+              syncDynamicHeightSlider(state.prism.height);
+              if (state.prism.allowOblique) {
+                state.prism.obliqueOffset.x = THREE.MathUtils.clamp(activeDrag.startOblique.x + delta.x, -2.1, 2.1);
+                state.prism.obliqueOffset.z = THREE.MathUtils.clamp(activeDrag.startOblique.z + delta.z, -2.1, 2.1);
+              }
+              changed = true;
+            } else if (activeDrag.role === 'pyramid-base') {
+              changed = tryMoveBaseVertex(
+                state.pyramid.baseVertices,
+                activeDrag.index,
+                clampXZ(hit.x),
+                clampXZ(hit.z)
+              );
+            } else if (activeDrag.role === 'pyramid-apex') {
+              state.pyramid.apex.set(
+                clampXZ(hit.x),
+                THREE.MathUtils.clamp(hit.y, state.pyramid.baseY + 0.5, 3.25),
+                clampXZ(hit.z)
+              );
+              syncDynamicHeightSlider(state.pyramid.apex.y - state.pyramid.baseY);
+              changed = true;
+            }
+
+            if (changed) {
+              rebuildSolidMesh(true);
+            }
+            return;
+          }
+
+          if (activeDrag.mode === 'plane') {
+            var pHit = new THREE.Vector3();
+            if (!raycaster.ray.intersectPlane(activeDrag.slidePlane, pHit)) return;
+            var diff = pHit.clone().sub(activeDrag.startHit);
+            var proj = diff.dot(activeDrag.normal);
+            state.plane.offset = THREE.MathUtils.clamp(activeDrag.startOffset + proj, -2.6, 2.6);
+            syncPlaneSlidersUI();
+            updateSliceAndView();
+          }
+        }
+
+        function onPointerUp(e) {
+          activePointers.delete(e.pointerId);
+          if (activePointers.size < 2 && activeDrag && activeDrag.mode === 'pinch') {
+            activeDrag = null;
+          } else if (activePointers.size === 0) {
+            activeDrag = null;
+          }
+          renderer.domElement.style.cursor = 'default';
+          try {
+            renderer.domElement.releasePointerCapture(e.pointerId);
+          } catch (_) {}
+        }
+
+        function onWheel(e) {
+          e.preventDefault();
+          var factor = e.deltaY > 0 ? 1.09 : 0.92;
+          orbit.targetSpherical.radius = THREE.MathUtils.clamp(
+            orbit.targetSpherical.radius * factor,
+            orbit.minRadius,
+            orbit.maxRadius
+          );
+        }
+
+        renderer.domElement.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+        renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
+        renderer.domElement.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+        // ---------------------------------------------------------------------
+        // 13. SIDEBAR & TOOLBAR UI BINDINGS
+        // ---------------------------------------------------------------------
+        var solidTabsEl = document.getElementById('solid-tabs');
+        var solidParamsEl = document.getElementById('solid-params');
+        var toggleHandlesRow = document.getElementById('toggle-handles-row');
+        var vertexHintBanner = document.getElementById('vertex-hint-banner');
+
+        var sliderOffset = document.getElementById('slider-offset');
+        var sliderPitch = document.getElementById('slider-pitch');
+        var sliderYaw = document.getElementById('slider-yaw');
+        var valOffset = document.getElementById('val-offset');
+        var valPitch = document.getElementById('val-pitch');
+        var valYaw = document.getElementById('val-yaw');
+
+        var sliderOpacity = document.getElementById('slider-opacity');
+        var valOpacity = document.getElementById('val-opacity');
+        var toggleEdges = document.getElementById('toggle-edges');
+        var togglePlane = document.getElementById('toggle-plane');
+        var toggleHandles = document.getElementById('toggle-handles');
+
+        var activeHeightSliderRef = null;
+        function syncDynamicHeightSlider(val) {
+          if (!activeHeightSliderRef) return;
+          activeHeightSliderRef.input.value = val.toFixed(1);
+          activeHeightSliderRef.readout.textContent = val.toFixed(1);
+        }
+
+        function syncPlaneSlidersUI() {
+          sliderOffset.value = state.plane.offset.toFixed(2);
+          valOffset.textContent = state.plane.offset.toFixed(2);
+          sliderPitch.value = Math.round(state.plane.pitchDeg);
+          valPitch.textContent = Math.round(state.plane.pitchDeg) + '°';
+          sliderYaw.value = Math.round(state.plane.yawDeg);
+          valYaw.textContent = Math.round(state.plane.yawDeg) + '°';
+        }
+
+        function updateSolidTabsUI() {
+          var btns = solidTabsEl.querySelectorAll('.solid-btn');
+          btns.forEach(function (btn) {
+            var active = btn.dataset.solid === state.solidType;
+            btn.className = active
+              ? 'solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-500/20'
+              : 'solid-btn py-2 px-1 rounded-xl border text-xs font-semibold transition bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-white';
+          });
+          var isPoly = state.solidType === 'prism' || state.solidType === 'pyramid';
+          toggleHandlesRow.style.display = isPoly ? 'flex' : 'none';
+          if (vertexHintBanner) vertexHintBanner.style.display = isPoly ? 'flex' : 'none';
+        }
+
+        function updateViewModeUI() {
+          document.querySelectorAll('.view-mode-btn').forEach(function (btn) {
+            var active = btn.dataset.view === state.viewMode;
+            btn.className = active
+              ? 'view-mode-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-indigo-600 text-white shadow'
+              : 'view-mode-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition text-slate-300 hover:text-white hover:bg-slate-800';
+          });
+        }
+
+        function renderSolidParamsUI() {
+          var t = state.solidType;
+          solidParamsEl.innerHTML = '';
+          activeHeightSliderRef = null;
+
+          function makeSlider(label, min, max, step, value, onInput, isHeightRef) {
+            var wrap = document.createElement('div');
+            wrap.innerHTML =
+              '<div class="flex justify-between text-xs mb-1">' +
+                '<span class="font-medium text-slate-300">' + label + '</span>' +
+                '<span class="font-mono font-semibold text-indigo-400">' + Number(value).toFixed(1) + '</span>' +
+              '</div>' +
+              '<input type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + value + '" />';
+            var input = wrap.querySelector('input');
+            var readout = wrap.querySelector('span.font-mono');
+            if (isHeightRef) activeHeightSliderRef = { input: input, readout: readout };
+            input.addEventListener('input', function () {
+              var v = parseFloat(input.value);
+              readout.textContent = v.toFixed(1);
+              onInput(v);
+            });
+            return wrap;
+          }
+
+          function makeSidesStepper(currentSides, onChange) {
+            var wrap = document.createElement('div');
+            wrap.innerHTML =
+              '<div class="flex items-center justify-between mb-1.5">' +
+                '<span class="text-xs font-medium text-slate-300">Base Polygon Sides (n)</span>' +
+                '<div class="flex items-center gap-1.5">' +
+                  '<button type="button" class="step-minus w-6 h-6 rounded-md bg-slate-700 border border-slate-600 text-slate-100 font-bold text-xs hover:bg-slate-600 transition">−</button>' +
+                  '<span class="step-val w-6 text-center font-mono text-xs font-bold text-indigo-400">' + currentSides + '</span>' +
+                  '<button type="button" class="step-plus w-6 h-6 rounded-md bg-slate-700 border border-slate-600 text-slate-100 font-bold text-xs hover:bg-slate-600 transition">+</button>' +
+                '</div>' +
+              '</div>' +
+              '<input type="range" min="3" max="12" step="1" value="' + currentSides + '" />';
+            var slider = wrap.querySelector('input');
+            var valEl = wrap.querySelector('.step-val');
+            function applyN(n) {
+              n = THREE.MathUtils.clamp(Math.round(n), 3, 12);
+              slider.value = n;
+              valEl.textContent = n;
+              onChange(n);
+            }
+            slider.addEventListener('input', function () { applyN(parseInt(slider.value, 10)); });
+            wrap.querySelector('.step-minus').addEventListener('click', function () { applyN(parseInt(slider.value, 10) - 1); });
+            wrap.querySelector('.step-plus').addEventListener('click', function () { applyN(parseInt(slider.value, 10) + 1); });
+            return wrap;
+          }
+
+          if (t === 'prism') {
+            solidParamsEl.appendChild(makeSidesStepper(state.prism.sides, function (n) {
+              state.prism.sides = n;
+              state.prism.baseVertices = createRegularPolygonVertices(n, state.prism.radius);
+              rebuildSolidMesh(false);
+            }));
+            solidParamsEl.appendChild(makeSlider('Height', 0.5, 4.4, 0.1, state.prism.height, function (v) {
+              state.prism.height = v;
+              rebuildSolidMesh(true);
+            }, true));
+
+            var obliqueRow = document.createElement('div');
+            obliqueRow.className = 'flex items-center justify-between pt-2 border-t border-slate-700/80';
+            obliqueRow.innerHTML =
+              '<label for="chk-oblique" class="text-xs font-medium text-slate-300 cursor-pointer">Allow Oblique Prism</label>' +
+              '<input id="chk-oblique" type="checkbox" ' + (state.prism.allowOblique ? 'checked' : '') + ' class="w-4 h-4 rounded accent-amber-500 cursor-pointer" />';
+            obliqueRow.querySelector('input').addEventListener('change', function (e) {
+              state.prism.allowOblique = e.target.checked;
+              if (!state.prism.allowOblique) {
+                state.prism.obliqueOffset = { x: 0, z: 0 };
+                rebuildSolidMesh(true);
+              }
+            });
+            solidParamsEl.appendChild(obliqueRow);
+          } else if (t === 'pyramid') {
+            solidParamsEl.appendChild(makeSidesStepper(state.pyramid.sides, function (n) {
+              state.pyramid.sides = n;
+              state.pyramid.baseVertices = createRegularPolygonVertices(n, state.pyramid.radius);
+              rebuildSolidMesh(false);
+            }));
+            var curH = state.pyramid.apex.y - state.pyramid.baseY;
+            solidParamsEl.appendChild(makeSlider('Height', 0.5, 4.4, 0.1, curH, function (v) {
+              state.pyramid.apex.y = state.pyramid.baseY + v;
+              rebuildSolidMesh(true);
+            }, true));
+          } else if (t === 'cuboid') {
+            solidParamsEl.appendChild(makeSlider('Width', 0.6, 3.6, 0.1, state.cuboid.width, function (v) {
+              state.cuboid.width = v; rebuildSolidMesh(false);
+            }));
+            solidParamsEl.appendChild(makeSlider('Height', 0.6, 3.6, 0.1, state.cuboid.height, function (v) {
+              state.cuboid.height = v; rebuildSolidMesh(false);
+            }));
+            solidParamsEl.appendChild(makeSlider('Depth', 0.6, 3.6, 0.1, state.cuboid.depth, function (v) {
+              state.cuboid.depth = v; rebuildSolidMesh(false);
+            }));
+          } else if (t === 'cylinder') {
+            solidParamsEl.appendChild(makeSlider('Radius', 0.4, 2.2, 0.1, state.cylinder.radius, function (v) {
+              state.cylinder.radius = v; rebuildSolidMesh(false);
+            }));
+            solidParamsEl.appendChild(makeSlider('Height', 0.6, 4.0, 0.1, state.cylinder.height, function (v) {
+              state.cylinder.height = v; rebuildSolidMesh(false);
+            }));
+          } else if (t === 'cone') {
+            solidParamsEl.appendChild(makeSlider('Radius', 0.4, 2.2, 0.1, state.cone.radius, function (v) {
+              state.cone.radius = v; rebuildSolidMesh(false);
+            }));
+            solidParamsEl.appendChild(makeSlider('Height', 0.6, 4.2, 0.1, state.cone.height, function (v) {
+              state.cone.height = v; rebuildSolidMesh(false);
+            }));
+          } else if (t === 'sphere') {
+            solidParamsEl.appendChild(makeSlider('Radius', 0.5, 2.2, 0.1, state.sphere.radius, function (v) {
+              state.sphere.radius = v; rebuildSolidMesh(false);
+            }));
+          }
+        }
+
+        // Solid tab clicks
+        solidTabsEl.addEventListener('click', function (e) {
+          var btn = e.target.closest('.solid-btn');
+          if (!btn) return;
+          state.solidType = btn.dataset.solid;
+          updateSolidTabsUI();
+          renderSolidParamsUI();
+          rebuildSolidMesh(false);
+        });
+
+        // Reset to Regular button
+        document.getElementById('reset-solid-btn').addEventListener('click', function () {
+          if (state.solidType === 'prism') {
+            state.prism.height = 2.4;
+            state.prism.obliqueOffset = { x: 0, z: 0 };
+            state.prism.baseVertices = createRegularPolygonVertices(state.prism.sides, state.prism.radius);
+          } else if (state.solidType === 'pyramid') {
+            state.pyramid.apex.set(0, 1.55, 0);
+            state.pyramid.baseVertices = createRegularPolygonVertices(state.pyramid.sides, state.pyramid.radius);
+          } else if (state.solidType === 'cuboid') {
+            state.cuboid = { width: 2.2, height: 2.0, depth: 1.8 };
+          } else if (state.solidType === 'cylinder') {
+            state.cylinder = { radius: 1.3, height: 2.5 };
+          } else if (state.solidType === 'cone') {
+            state.cone = { radius: 1.45, height: 2.7 };
+          } else if (state.solidType === 'sphere') {
+            state.sphere = { radius: 1.55 };
+          }
+          renderSolidParamsUI();
+          rebuildSolidMesh(false);
+        });
+
+        // Plane sliders & presets
+        sliderOffset.addEventListener('input', function () {
+          state.plane.offset = parseFloat(sliderOffset.value);
+          valOffset.textContent = state.plane.offset.toFixed(2);
+          updateSliceAndView();
+        });
+        sliderPitch.addEventListener('input', function () {
+          state.plane.pitchDeg = parseFloat(sliderPitch.value);
+          valPitch.textContent = Math.round(state.plane.pitchDeg) + '°';
+          updateSliceAndView();
+        });
+        sliderYaw.addEventListener('input', function () {
+          state.plane.yawDeg = parseFloat(sliderYaw.value);
+          valYaw.textContent = Math.round(state.plane.yawDeg) + '°';
+          updateSliceAndView();
+        });
+
+        function applyPlanePreset(offset, pitch, yaw) {
+          state.plane.offset = offset;
+          state.plane.pitchDeg = pitch;
+          state.plane.yawDeg = yaw;
+          syncPlaneSlidersUI();
+          updateSliceAndView();
+        }
+        document.getElementById('preset-horizontal').addEventListener('click', function () { applyPlanePreset(0, 0, 0); });
+        document.getElementById('preset-vertical').addEventListener('click', function () { applyPlanePreset(0, 90, 0); });
+        document.getElementById('preset-diagonal').addEventListener('click', function () { applyPlanePreset(0, 45, 35); });
+        document.getElementById('reset-plane-btn').addEventListener('click', function () { applyPlanePreset(0, 35, 30); });
+
+        // Display toggles
+        sliderOpacity.addEventListener('input', function () {
+          state.opacity = parseFloat(sliderOpacity.value);
+          valOpacity.textContent = Math.round(state.opacity * 100) + '%';
+          updateSliceAndView();
+        });
+        toggleEdges.addEventListener('change', function () {
+          state.showEdges = toggleEdges.checked;
+          updateSliceAndView();
+        });
+        togglePlane.addEventListener('change', function () {
+          state.showPlane = togglePlane.checked;
+          updateSliceAndView();
+        });
+        toggleHandles.addEventListener('change', function () {
+          state.showHandles = toggleHandles.checked;
+          syncVertexHandlePositions();
+        });
+
+        // View mode switcher
+        document.querySelectorAll('.view-mode-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            state.viewMode = btn.dataset.view;
+            updateViewModeUI();
+            updateSliceAndView();
+          });
+        });
+
+        // Mobile sidebar drawer & 2D preview collapse
+        var sidebar = document.getElementById('sidebar');
+        if (window.innerWidth < 768) sidebar.classList.add('sidebar-closed');
+        document.getElementById('open-sidebar-btn').addEventListener('click', function () {
+          sidebar.classList.remove('sidebar-closed');
+        });
+        document.getElementById('close-sidebar-btn').addEventListener('click', function () {
+          sidebar.classList.add('sidebar-closed');
+        });
+
+        var previewBody = document.getElementById('preview-body');
+        var togglePreviewBtn = document.getElementById('toggle-preview-btn');
+        togglePreviewBtn.addEventListener('click', function () {
+          var hidden = previewBody.classList.toggle('hidden');
+          togglePreviewBtn.textContent = hidden ? '+' : '−';
+        });
+
+        // ---------------------------------------------------------------------
+        // 14. INITIAL RENDER & ANIMATION LOOP
+        // ---------------------------------------------------------------------
+        updateSolidTabsUI();
+        updateViewModeUI();
+        renderSolidParamsUI();
+        syncPlaneSlidersUI();
+        rebuildSolidMesh(false);
+
+        function animate() {
+          requestAnimationFrame(animate);
+          updateCameraFromOrbit(false);
+          renderer.render(scene, camera);
+        }
+        animate();
+      }
+    })();
+  </script>
+</body>
+</html>
